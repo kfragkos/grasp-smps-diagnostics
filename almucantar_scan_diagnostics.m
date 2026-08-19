@@ -3,18 +3,19 @@
 %
 % IMPORTANT - SDAT CHECK:
 % This script is NOT intended to reproduce the photometer subset written
-% to the GRASP SDAT file. It analyses the full raw AERONET almucantar scan,
+% to a GRASP SDAT file. It analyses the full raw AERONET almucantar scan,
 % including scattering-angle information and both branches.
 %
-% For a direct check against Mariana's SDAT construction, use:
+% For a direct check of the angular subset retained for SDAT construction,
+% use:
 %
 %     almucantar_sdat_crosscheck.m
 %
 % That companion script reproduces the 30 positive/outward azimuths,
 % applies the common four-wavelength NaN/missing-value mask, and reports
 % N_SDAT_common, retained azimuths, RAA, SZA and VZA. It deliberately does
-% not use scattering angle because scattering angle is not read when the
-% SDAT is constructed.
+% not use scattering angle because scattering angle is not required for
+% that SDAT construction step.
 %
 % This file is retained for the separate scientific diagnostic of whether
 % the raw almucantar scan shows branch asymmetry / possible horizontal
@@ -53,7 +54,7 @@ branchMinScatteringAngle = 6;
 % Reference line/flag only; not a proposed selection threshold.
 branchDifferenceThresholdPct = 20;
 
-% Default target cases for the July/August diagnostic file.
+% Example target scans. Edit as needed.
 targetTimes = [
     datetime(2024,7,13,14,35,0,'TimeZone','UTC')
     datetime(2024,7,13,14,54,0,'TimeZone','UTC')
@@ -61,12 +62,7 @@ targetTimes = [
     datetime(2024,8,12,14,46,0,'TimeZone','UTC')
     ];
 
-targetLabels = [
-    "13Jul_good"
-    "13Jul_poor"
-    "12Aug_poor"
-    "12Aug_good"
-    ];
+targetLabels = string(datestr(targetTimes,'yyyymmdd_HHMMSS'));
 
 % Set to [] to analyse ALL complete scans instead of selected target times:
 % targetTimes = [];
@@ -518,6 +514,7 @@ function [pairNom, pairScat, Iplus, Iminus, branchDiff] = ...
         if isempty(ip) || isempty(im)
             continue
         end
+
         ip = ip(1);
         im = im(1);
 
