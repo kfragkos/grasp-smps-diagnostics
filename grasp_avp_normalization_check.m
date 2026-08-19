@@ -2,22 +2,24 @@
 % Check normalization of the aerosol vertical profile (AVP) printed by
 % GRASP classic inversion output files.
 %
-% The script reads one or more *_inversion_output.txt files and calculates:
-%   1) integral of the 60 retrieved AVP points;
-%   2) contribution of the extra ground point printed by GRASP;
-%   3) integral of the complete printed AVP (including ground extension);
-%   4) missing fraction required for the integral to equal 1;
-%   5) the constant-continuation depth that would supply the missing area
-%      if the uppermost printed AVP value were held constant above z_top;
-%   6) the corresponding implied upper altitude;
-%   7) AOD1064 * integral(printed AVP), for comparison with an AOD obtained
-%      by integrating extinction reconstructed as AOD1064 * AVP.
+% For a LUT aerosol profile, GRASP adds boundary points at the ground and
+% at the model top. Below the lowest LUT altitude the lowest value is held
+% constant. Above the highest LUT altitude the profile is connected
+% linearly to zero at the model top. For the configuration considered here,
+% the top of the atmosphere is 40 km.
 %
-% IMPORTANT INTERPRETATION:
-% The inferred continuation depth / upper altitude is a DIAGNOSTIC only.
-% Agreement between cases is evidence for a fixed upper-boundary treatment,
-% but does not by itself prove how GRASP implements the profile internally.
-% Confirmation from the GRASP developers/source code is still required.
+% The script reads one or more *_inversion_output.txt files and calculates:
+%   1) integral of the retrieved AVP points;
+%   2) contribution of the additional ground point printed by GRASP;
+%   3) integral of the complete printed AVP up to the highest retrieved
+%      altitude;
+%   4) missing fraction required for the full normalized profile to equal 1;
+%   5) expected upper-triangle contribution for a linear decrease to zero
+%      at the configured model top;
+%   6) model-top altitude inferred independently from the printed AVP and
+%      the missing normalized fraction;
+%   7) normalization closure after adding the upper triangle;
+%   8) corresponding 1064-nm AOD contributions.
 %
 % No special MATLAB toolboxes are required.
 
@@ -25,10 +27,10 @@ clear; clc;
 
 %% ------------------------ USER SETTINGS -------------------------------
 
-% Option A: automatically analyse all matching files in the current folder.
+% Analyse all matching GRASP classic inversion outputs in the current folder.
 files = dir('*_inversion_output.txt');
 
-% Option B: use an explicit list instead (uncomment and edit as needed).
+% Alternatively, provide an explicit list:
 % fileNames = {
 %     '20240713T143509_inversion_output.txt'
 %     '20240713T145353_inversion_output.txt'
@@ -36,6 +38,9 @@ files = dir('*_inversion_output.txt');
 %     '20240923T071917_inversion_output.txt'
 %     };
 % files = struct('name', fileNames);
+
+% Top of the GRASP model atmosphere for this configuration.
+HMAX_mASL = 40000;
 
 outputCsv = 'grasp_avp_normalization_summary.csv';
 
@@ -57,10 +62,13 @@ AVPIntegralPrinted = nan(nFiles,1);
 MissingToUnity = nan(nFiles,1);
 TopAltitude_mASL = nan(nFiles,1);
 TopAVP_mInv = nan(nFiles,1);
-ImpliedContinuationDepth_m = nan(nFiles,1);
-ImpliedUpperAltitude_mASL = nan(nFiles,1);
-AOD_from_AODxPrintedAVP = nan(nFiles,1);
-AODRatio_fromPrintedAVP = nan(nFiles,1);
+UpperTriangle40km = nan(nFiles,1);
+InferredHMAX_mASL = nan(nFiles,1);
+NormalizationClosure40km = nan(nFiles,1);
+ClosureError40km = nan(nFiles,1);
+AOD_PrintRange = nan(nFiles,1);
+AOD_UpperTriangle40km = nan(nFiles,1);
+AOD_FullProfile40km = nan(nFiles,1);
 
 for i = 1:nFiles
     fileName = files(i).name;
@@ -97,22 +105,17 @@ for i = 1:nFiles
     avpBlock = txtAfterStart(1:iEndRel(1)-1);
     lines = regexp(avpBlock, '\r\n|\n|\r', 'split');
 
-    idx = [];
     z = [];
     avp = [];
     isGround = [];
 
     for j = 1:numel(lines)
-        % Captures both normal lines, e.g.
-        %   60    242.50   0.23186E-03
-        % and the starred ground line, e.g.
-        % * 61     70.00   0.23186E-03
+        % Captures both normal profile rows and the starred ground row.
         t = regexp(lines{j}, ...
             '^\s*(\*?)\s*(\d+)\s+([0-9.+\-Ee]+)\s+([0-9.+\-Ee]+)\s*$', ...
             'tokens', 'once');
 
         if ~isempty(t)
-            idx(end+1,1) = str2double(t{2}); %#ok<SAGROW>
             z(end+1,1) = str2double(t{3}); %#ok<SAGROW>
             avp(end+1,1) = str2double(t{4}); %#ok<SAGROW>
             isGround(end+1,1) = ~isempty(t{1}); %#ok<SAGROW>
@@ -123,8 +126,7 @@ for i = 1:nFiles
         error('Could not parse AVP values from %s', fileName);
     end
 
-    % Sort by physical altitude because GRASP prints the profile from top
-    % to bottom, while trapz should be applied with increasing z.
+    % GRASP prints top-to-bottom; sort by increasing physical altitude for trapz.
     [zAll, orderAll] = sort(z, 'ascend');
     avpAll = avp(orderAll);
     groundAll = logical(isGround(orderAll));
@@ -132,7 +134,7 @@ for i = 1:nFiles
     % Complete printed profile, including the starred ground point.
     Iprinted = trapz(zAll, avpAll);
 
-    % Retrieved points only (exclude the starred ground point).
+    % Retrieved points only.
     zRet = zAll(~groundAll);
     avpRet = avpAll(~groundAll);
 
@@ -143,25 +145,30 @@ for i = 1:nFiles
     Iretrieved = trapz(zRet, avpRet);
     Iground = Iprinted - Iretrieved;
 
-    % Uppermost retrieved point.
     [zTop, iTop] = max(zRet);
     avpTop = avpRet(iTop);
-
     missing = 1 - Iprinted;
 
-    % If the final AVP value were continued constantly above zTop, this is
-    % the extra vertical distance required for the total integral to reach 1.
-    if missing >= 0 && avpTop > 0
-        continuationDepth = missing / avpTop;
-        impliedUpperAltitude = zTop + continuationDepth;
+    % GRASP LUT treatment above the highest retrieved altitude:
+    % linear connection from AVP_top to zero at HMAX.
+    if HMAX_mASL > zTop && avpTop >= 0
+        upperTriangle = 0.5 * avpTop * (HMAX_mASL - zTop);
     else
-        continuationDepth = NaN;
-        impliedUpperAltitude = NaN;
+        upperTriangle = NaN;
     end
 
+    % Infer HMAX from the missing normalized area without assuming 40 km:
+    % missing = 0.5 * AVP_top * (HMAX - zTop).
+    if missing >= 0 && avpTop > 0
+        inferredHmax = zTop + 2 * missing / avpTop;
+    else
+        inferredHmax = NaN;
+    end
+
+    closure = Iprinted + upperTriangle;
+    closureError = closure - 1;
+
     %% Extract GRASP AOD at 1.064 um
-    % Isolate the first AOD_Total section so later output sections cannot
-    % accidentally be matched.
     aodStart = strfind(txt, 'Wavelength (um), AOD_Total');
     if isempty(aodStart)
         error('AOD_Total section not found in %s', fileName);
@@ -183,7 +190,7 @@ for i = 1:nFiles
 
     aod1064 = str2double(tAod{1});
 
-    %% Save case results
+    %% Save results
     AOD1064(i) = aod1064;
     AVPIntegralRetrieved(i) = Iretrieved;
     GroundExtensionContribution(i) = Iground;
@@ -191,61 +198,42 @@ for i = 1:nFiles
     MissingToUnity(i) = missing;
     TopAltitude_mASL(i) = zTop;
     TopAVP_mInv(i) = avpTop;
-    ImpliedContinuationDepth_m(i) = continuationDepth;
-    ImpliedUpperAltitude_mASL(i) = impliedUpperAltitude;
-    AOD_from_AODxPrintedAVP(i) = aod1064 * Iprinted;
-    AODRatio_fromPrintedAVP(i) = Iprinted;
+    UpperTriangle40km(i) = upperTriangle;
+    InferredHMAX_mASL(i) = inferredHmax;
+    NormalizationClosure40km(i) = closure;
+    ClosureError40km(i) = closureError;
+    AOD_PrintRange(i) = aod1064 * Iprinted;
+    AOD_UpperTriangle40km(i) = aod1064 * upperTriangle;
+    AOD_FullProfile40km(i) = aod1064 * closure;
 end
 
 %% ----------------------------- OUTPUT ---------------------------------
 
 T = table(File, DateUTC, TimeUTC, AOD1064, ...
     AVPIntegralRetrieved, GroundExtensionContribution, AVPIntegralPrinted, ...
-    MissingToUnity, TopAltitude_mASL, TopAVP_mInv, ...
-    ImpliedContinuationDepth_m, ImpliedUpperAltitude_mASL, ...
-    AOD_from_AODxPrintedAVP, AODRatio_fromPrintedAVP);
+    MissingToUnity, TopAltitude_mASL, TopAVP_mInv, UpperTriangle40km, ...
+    InferredHMAX_mASL, NormalizationClosure40km, ClosureError40km, ...
+    AOD_PrintRange, AOD_UpperTriangle40km, AOD_FullProfile40km);
 
 disp(T);
 writetable(T, outputCsv);
 
-validUpper = ImpliedUpperAltitude_mASL(isfinite(ImpliedUpperAltitude_mASL));
+validH = InferredHMAX_mASL(isfinite(InferredHMAX_mASL));
 
-fprintf('\n');
-fprintf('Saved summary: %s\n', outputCsv);
+fprintf('\nSaved summary: %s\n', outputCsv);
+fprintf('Configured model top: %.3f m a.s.l.\n', HMAX_mASL);
 
-if ~isempty(validUpper)
-    fprintf('Implied constant-continuation upper altitude across cases:\n');
-    fprintf('  mean   = %.3f m a.s.l.\n', mean(validUpper));
-    fprintf('  median = %.3f m a.s.l.\n', median(validUpper));
-    fprintf('  min    = %.3f m a.s.l.\n', min(validUpper));
-    fprintf('  max    = %.3f m a.s.l.\n', max(validUpper));
-    fprintf('  range  = %.3f m\n', max(validUpper)-min(validUpper));
+if ~isempty(validH)
+    fprintf('Inferred model-top altitude across cases:\n');
+    fprintf('  mean   = %.3f m a.s.l.\n', mean(validH));
+    fprintf('  median = %.3f m a.s.l.\n', median(validH));
+    fprintf('  min    = %.3f m a.s.l.\n', min(validH));
+    fprintf('  max    = %.3f m a.s.l.\n', max(validH));
+    fprintf('  range  = %.3f m\n', max(validH)-min(validH));
 end
 
-%% ----------------------- EXPECTED CROSS-CHECK -------------------------
-% For the four test files discussed in August 2026, values should be close
-% to the following (small differences can arise only from text rounding):
-%
-% 2024-07-13 14:35:09
-%   printed AVP integral        ~ 0.961187
-%   top AVP                    ~ 2.3426e-6 1/m
-%   implied upper altitude     ~ 23432.4 m a.s.l.
-%   AOD1064 * AVP integral     ~ 0.066138
-%
-% 2024-07-13 14:53:53
-%   printed AVP integral        ~ 0.973122
-%   top AVP                    ~ 1.6224e-6 1/m
-%   implied upper altitude     ~ 23430.9 m a.s.l.
-%   AOD1064 * AVP integral     ~ 0.069070
-%
-% 2024-09-04 13:47:49
-%   printed AVP integral        ~ 0.674835
-%   top AVP                    ~ 1.9626e-5 1/m
-%   implied upper altitude     ~ 23432.0 m a.s.l.
-%   AOD1064 * AVP integral     ~ 0.161826
-%
-% 2024-09-23 07:19:17
-%   printed AVP integral        ~ 0.717833
-%   top AVP                    ~ 1.7031e-5 1/m
-%   implied upper altitude     ~ 23431.7 m a.s.l.
-%   AOD1064 * AVP integral     ~ 0.041922
+fprintf('\nInterpretation:\n');
+fprintf('  AVPIntegralPrinted integrates only the printed profile range.\n');
+fprintf('  UpperTriangle40km adds the linear extension from AVP_top to zero at 40 km.\n');
+fprintf('  NormalizationClosure40km should be close to 1.\n');
+fprintf('  InferredHMAX_mASL should be close to 40000 m if the printed profile is consistent with this treatment.\n');
