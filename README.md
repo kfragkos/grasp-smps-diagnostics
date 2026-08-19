@@ -2,14 +2,74 @@
 
 Small MATLAB utilities supporting the GRASP–SMPS comparison.
 
-The repository currently contains two independent diagnostics:
+The repository currently contains three diagnostics:
 
-1. `almucantar_scan_diagnostics.m` — inspects AERONET Version 3 **raw almucantar** (`.alm`) scans to test whether close good/bad GRASP–SMPS retrieval pairs differ in radiance scan content or branch symmetry.
-2. `grasp_avp_normalization_check.m` — inspects GRASP classic inversion-output text files to check how the printed normalized aerosol vertical profile (AVP) integrates over the reported altitude range.
+1. `almucantar_sdat_crosscheck.m` — reproduces the photometer-side selection used when writing the GRASP SDAT file and gives a simple cross-check of the exact azimuths, counts and geometry retained after the common four-wavelength mask.
+2. `almucantar_scan_diagnostics.m` — inspects AERONET Version 3 **raw almucantar** (`.alm`) scans to test branch symmetry and angular/scattering-angle diagnostics. This is a separate diagnostic and does **not** reproduce SDAT construction.
+3. `grasp_avp_normalization_check.m` — inspects GRASP classic inversion-output text files to check the normalization of the printed aerosol vertical profile (AVP).
 
 ---
 
-## 1. Almucantar scan diagnostics
+## 1. SDAT almucantar cross-check
+
+`almucantar_sdat_crosscheck.m` follows the photometer preprocessing described for the manuscript SDAT construction.
+
+### What it does
+
+For each selected almucantar scan it:
+
+- requires the four GRASP photometer wavelengths: 440, 675, 870 and 1020 nm;
+- identifies the 30 positive/outward raw almucantar azimuth positions from 2° to 180°;
+- removes the repeated 6° entry in the raw AERONET header so that the initial set is exactly 30 azimuths;
+- reports the number of valid radiances at each wavelength before the common mask;
+- checks angular coverage;
+- applies the same common four-wavelength mask used for SDAT: if an azimuth has an invalid/NaN radiance at **any** wavelength, that azimuth is removed from **all four** wavelengths;
+- reports the retained azimuths and `RAA = azimuth + 180`;
+- reports the SZA at each wavelength and `VZA = 180 - SZA`;
+- writes an angle-level table showing exactly which wavelength caused each discarded azimuth.
+
+### Important point
+
+The SDAT cross-check **does not read or use scattering angle**, because scattering angle is not required when the SDAT is written. The scattering-angle/branch-symmetry analysis remains a separate diagnostic in `almucantar_scan_diagnostics.m`.
+
+Raw radiances are included in the detailed CSV only to trace missing values. They are **not** normalized in this script by `E0` and Earth–Sun distance, so their absolute values should not be compared directly with the normalized SDAT radiances unless the identical normalization is subsequently applied.
+
+### Usage
+
+Place `almucantar_sdat_crosscheck.m` with the annual AERONET raw almucantar file and edit:
+
+```matlab
+inputFile = '20240101_20241231_Magurele_Inoe.alm';
+```
+
+A ZIP containing one `.alm` file can also be used.
+
+The current script contains the 12 GRASP–SMPS case times discussed in the analysis. The target list can be edited if the case set changes.
+
+Run:
+
+```matlab
+almucantar_sdat_crosscheck
+```
+
+### What Mariana should compare with the SDAT
+
+The useful columns in `almucantar_sdat_crosscheck_summary.csv` are:
+
+- `N_SDAT_common` — should equal `n`, the number of angular measurements written for each photometer wavelength in SDAT;
+- `RetainedAzimuth_deg` — exact azimuth positions remaining after the common four-wavelength mask;
+- `RetainedRAA_deg` — the corresponding `azimuth + 180` values written as RAA;
+- `SZA440_deg`, `SZA675_deg`, `SZA870_deg`, `SZA1020_deg` — the four wavelength-specific SZA values;
+- `VZA440_deg`, etc. — `180-SZA`, for direct comparison with SDAT geometry;
+- `RemovedAzimuth_deg` — positions removed because at least one wavelength was invalid.
+
+The detailed `almucantar_sdat_crosscheck_angles.csv` contains one row for each of the original 30 azimuths and flags `Valid440`, `Valid675`, `Valid870`, `Valid1020`, and `RetainedInSDAT`. This is the easiest file to use when an SDAT count does not match.
+
+For example, for the 13 July 2024 14:35 scan, the raw positive branch contains 30 initial azimuths and the common mask removes 2° and 2.5°, leaving 28 positions. This matches the 28 photometer radiances shown in the corresponding GRASP inversion output.
+
+---
+
+## 2. Raw almucantar branch-symmetry diagnostics
 
 ### What the script calculates
 
@@ -35,89 +95,13 @@ The script also writes the individual branch-pair values and can generate a four
 
 ### Important interpretation caveat
 
-The code analyses the **raw AERONET almucantar file**. Therefore `NValidRaw` means valid measurements present in the raw scan.
+The code analyses the **raw AERONET almucantar file**, including both branches. Therefore `NValidRaw` is not the number of measurements finally written to SDAT. Use `almucantar_sdat_crosscheck.m` for that comparison.
 
-If additional points were removed during preprocessing before the GRASP `SDAT` file was written, the raw counts should not automatically be described as the exact measurements *supplied to GRASP*. To establish that, compare the result with the `SDAT` file or with the exact preprocessing code.
-
-### Input
-
-The script accepts either:
-
-1. an extracted AERONET `.alm` file, or
-2. the `.zip` downloaded from AERONET containing the `.alm` file.
-
-No special MATLAB toolboxes are required.
-
-### Usage
-
-Download `almucantar_scan_diagnostics.m`, place it in a working directory, and edit the input path near the top:
-
-```matlab
-inputFile = '20240710_20240815_Magurele_Inoe.zip';
-```
-
-The default target cases are:
-
-- 13 July 2024 ~14:35 UTC — good GRASP–SMPS agreement;
-- 13 July 2024 ~14:54 UTC — poor agreement;
-- 12 August 2024 ~14:11 UTC — poor agreement;
-- 12 August 2024 ~14:46 UTC — good agreement.
-
-The times are approximate scan-centre times. The script locates the nearest complete four-wavelength scan within the configured tolerance.
-
-To analyse all complete scans instead, set:
-
-```matlab
-targetTimes = [];
-targetLabels = strings(0,1);
-```
-
-### Output files
-
-The script creates:
-
-- `almucantar_wavelength_diagnostics.csv` — wavelength-level diagnostics;
-- `almucantar_scan_summary.csv` — one-row-per-scan summary;
-- `almucantar_branch_pairs.csv` — individual matched branch pairs;
-- `almucantar_branch_symmetry.png` — optional diagnostic plot.
-
-### Cross-check values for the July/August test file
-
-For `20240710_20240815_Magurele_Inoe.zip`, approximate values expected from the current implementation are:
-
-#### 13 July 2024, good scan (~14:35)
-
-- 63 valid raw measurements at every wavelength;
-- maximum actual scattering angle: about 111.5–113.0°;
-- wavelength mean branch differences: approximately 7.78%, 6.77%, 7.23%, 5.08% for 1020, 870, 675, 440 nm respectively;
-- mean of the four wavelength means: about 6.72%;
-- largest individual branch difference: about 18.85%.
-
-#### 13 July 2024, poor scan (~14:54)
-
-- 63 valid raw measurements at every wavelength;
-- maximum actual scattering angle: about 118.2–119.7°;
-- wavelength mean branch differences: approximately 7.10%, 7.69%, 8.24%, 5.73% for 1020, 870, 675, 440 nm respectively;
-- mean of the four wavelength means: about 7.19%;
-- largest individual branch difference: about 15.63%.
-
-#### 12 August 2024
-
-- poor scan (~14:11): mean branch difference across wavelengths about 4.30%, maximum individual difference about 11.03%;
-- good scan (~14:46): mean branch difference across wavelengths about 2.43%, maximum individual difference about 11.45%.
-
-These values are intended as implementation cross-checks, not as universal QC thresholds.
-
-### Angular-bin detail
-
-The manuscript intervals overlap at 6° and 30°. Therefore their counts are **not additive**. For that reason, the script reports both:
-
-- `Ncrit_*`: counts using the exact overlapping manuscript intervals;
-- `Npart_*`: a non-overlapping partition whose sum equals `NValidRaw`.
+Branch symmetry is a diagnostic of possible scan asymmetry/horizontal inhomogeneity and is **not** proposed as a universal GRASP quality-control threshold.
 
 ---
 
-## 2. GRASP AVP normalization diagnostic
+## 3. GRASP AVP normalization diagnostic
 
 `grasp_avp_normalization_check.m` reads GRASP classic `*_inversion_output.txt` files and tests the printed aerosol vertical profile (AVP), which GRASP labels in units of `1/m`.
 
@@ -128,9 +112,10 @@ For each file it calculates:
 - integral of the complete printed AVP;
 - missing fraction `1 - integral(AVP)`;
 - uppermost printed AVP value;
-- the extra vertical depth needed to make the integral equal to 1 **if the uppermost AVP value were continued constantly upward**;
-- the corresponding implied upper altitude;
-- `AOD1064 * integral(printed AVP)`, for comparison with AOD obtained by integrating an extinction profile reconstructed as `AOD1064 * AVP`.
+- the extra vertical depth associated with the missing normalized area;
+- `AOD1064 * integral(printed AVP)`, for comparison with AOD obtained by integrating the printed extinction profile.
+
+Subsequent inspection of the GRASP source code and GRASPpac literature showed that, for the LUT profile used here, GRASP adds the ground and a top-of-atmosphere point at 40 km. Above the highest retrieved lidar level, extinction is represented by a linear connection from the uppermost retrieved value to zero at 40 km; below the lowest LUT level, the lowest value is held constant to the ground. Thus an integration that stops at the highest printed retrieval level does not include the complete GRASP column.
 
 ### Usage
 
@@ -139,8 +124,6 @@ Place the GRASP inversion-output text files and `grasp_avp_normalization_check.m
 ```matlab
 *_inversion_output.txt
 ```
-
-Alternatively, edit the explicit `fileNames` list near the top of the script.
 
 Run:
 
@@ -154,25 +137,8 @@ The script prints a summary table and writes:
 grasp_avp_normalization_summary.csv
 ```
 
-### Cross-check values from four example retrievals
-
-Using the inversion outputs examined during the GRASP–SMPS analysis:
-
-| Retrieval | Printed AVP integral | Top AVP [1/m] | Implied upper altitude [m a.s.l.] | AOD1064 × AVP integral |
-|---|---:|---:|---:|---:|
-| 2024-07-13 14:35:09 | ~0.961187 | 2.3426e-6 | ~23432.4 | ~0.066138 |
-| 2024-07-13 14:53:53 | ~0.973122 | 1.6224e-6 | ~23430.9 | ~0.069070 |
-| 2024-09-04 13:47:49 | ~0.674835 | 1.9626e-5 | ~23432.0 | ~0.161826 |
-| 2024-09-23 07:19:17 | ~0.717833 | 1.7031e-5 | ~23431.7 | ~0.041922 |
-
-Across these four examples, the implied upper altitude from the simple constant-continuation calculation is approximately **23.432 km a.s.l.**
-
-### Interpretation caveat
-
-The constant-continuation calculation is a **diagnostic hypothesis**, not proof of GRASP's internal implementation. The very similar implied upper altitude across different retrievals is useful evidence of a fixed upper-boundary treatment, but the actual handling of the AVP above the lidar retrieval range should be confirmed from GRASP documentation/source code or by the GRASP developers.
-
 ---
 
 ## Scientific use
 
-These scripts are intended to answer narrow diagnostic questions before introducing additional case-selection thresholds. They should be interpreted together with GRASP residuals and retrieval errors, SMPS averaging/uncertainty, boundary-layer representativeness, and targeted inversion-stability tests rather than used as universal QC filters.
+These scripts answer narrow diagnostic questions. They should be interpreted together with GRASP residuals and retrieval errors, SMPS averaging/uncertainty, boundary-layer representativeness, and targeted inversion-stability tests rather than used as universal QC filters.
