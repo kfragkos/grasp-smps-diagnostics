@@ -1,32 +1,27 @@
 %% almucantar_sdat_crosscheck.m
-% Cross-check the AERONET almucantar radiances that are actually retained
-% when constructing the GRASP SDAT file.
+% Cross-check the AERONET almucantar radiances retained when constructing
+% a GRASP SDAT file.
 %
-% This script follows Mariana's SDAT preprocessing logic for the photometer:
-%   1) read the raw annual AERONET .alm file;
+% The script reproduces the photometer-side angular selection:
+%   1) read an annual AERONET raw almucantar .alm file;
 %   2) select scans containing all four GRASP wavelengths
 %      (440, 675, 870, 1020 nm);
 %   3) use the 30 positive/outward almucantar azimuth positions from
-%      2 deg to 180 deg (the repeated 6 deg entry in the raw header is
-%      retained only once);
+%      2 deg to 180 deg (the repeated 6 deg entry is retained once);
 %   4) report the number of valid radiances at each wavelength and the
 %      angular-range coverage;
-%   5) apply a COMMON four-wavelength mask: if a radiance is missing/NaN
-%      at ANY of the four wavelengths, that azimuth is removed from ALL
-%      four wavelengths;
-%   6) report the retained azimuths, RAA = azimuth + 180, SZA and
-%      VZA = 180 - SZA so they can be compared directly with the SDAT.
+%   5) apply a common four-wavelength mask: if a radiance is missing/NaN
+%      at any wavelength, that azimuth is removed from all four;
+%   6) report retained azimuths, RAA = azimuth + 180, SZA and
+%      VZA = 180 - SZA for comparison with an independently generated SDAT.
 %
 % IMPORTANT:
-% - This cross-check deliberately DOES NOT use the scattering-angle fields
-%   from the .alm file, because Mariana does not use them when writing SDAT.
-% - Raw radiances are included in the angle-level CSV only for tracing the
-%   common mask. They are NOT normalized here by E0/Earth-Sun distance, so
-%   do not compare their absolute values directly with normalized SDAT
-%   radiances unless the same normalization is applied.
-% - The separate almucantar_scan_diagnostics.m script remains the place for
-%   branch-symmetry / scattering-angle diagnostics. Those diagnostics are
-%   not part of SDAT construction.
+% - This cross-check deliberately does NOT use the scattering-angle fields
+%   from the .alm file because they are not required for this SDAT step.
+% - Raw radiances are included only to trace the common mask. They are not
+%   normalized here by E0/Earth-Sun distance.
+% - Branch-symmetry/scattering-angle diagnostics are handled separately in
+%   almucantar_scan_diagnostics.m.
 %
 % No special MATLAB toolboxes are required.
 
@@ -34,22 +29,22 @@ clear; clc;
 
 %% ------------------------ USER SETTINGS -------------------------------
 
-% Use Mariana's annual raw AERONET almucantar file here. A ZIP containing
-% one .alm file is also accepted.
+% Annual AERONET raw almucantar file. A ZIP containing one .alm file is
+% also accepted.
 inputFile = '20240101_20241231_Magurele_Inoe.alm';
 
-% GRASP wavelengths used in the SDAT.
+% GRASP photometer wavelengths used in the SDAT.
 graspWavelengths = [440 675 870 1020];
 
 % Consecutive wavelength rows belonging to one almucantar scan are normally
 % separated by ~1-2 min. A gap >5 min starts a new scan.
 scanGapMinutes = 5;
 
-% Maximum difference between a requested GRASP case time and the nearest
+% Maximum difference between a requested retrieval time and the nearest
 % complete four-wavelength almucantar scan.
 targetToleranceMinutes = 8;
 
-% Current 12 GRASP-SMPS cases. Edit if the case list changes.
+% Example retrieval times from the study. Edit as needed.
 targetTimes = [
     datetime(2024,5,26,14,26,03,'TimeZone','UTC')
     datetime(2024,5,26,16,00,28,'TimeZone','UTC')
@@ -65,22 +60,9 @@ targetTimes = [
     datetime(2024,9,23,07,19,17,'TimeZone','UTC')
     ];
 
-targetLabels = [
-    "26May-poor"
-    "26May-good1"
-    "26May-good2"
-    "13Jul-good"
-    "13Jul-poor"
-    "14Jul-good"
-    "15Jul-poor"
-    "8Aug-poor"
-    "11Aug-poor1"
-    "11Aug-poor2"
-    "4Sep-poor"
-    "23Sep-good"
-    ];
+targetLabels = string(datestr(targetTimes,'yyyymmdd_HHMMSS'));
 
-% To analyse every complete scan instead of selected cases:
+% To analyse every complete scan instead of selected retrieval times:
 % targetTimes = [];
 % targetLabels = strings(0,1);
 
@@ -111,7 +93,7 @@ if mod(nRemaining,2) ~= 0
 end
 
 % The raw file stores one block of radiances and one block of scattering
-% angles. We only use the radiance block here.
+% angles. Only the radiance block is used here.
 nAnglesRaw = nRemaining/2;
 nominalAnglesRaw = str2double(headerFields(nMeta+1:nMeta+nAnglesRaw));
 nominalAnglesRaw = nominalAnglesRaw(:);
@@ -128,6 +110,7 @@ end
 candidateIdx = (iFirst2:iFirst180)';
 candidateAngles = nominalAnglesRaw(candidateIdx);
 
+% Stable de-duplication of the positive azimuth sequence.
 keepUnique = false(size(candidateAngles));
 seenAngles = [];
 for i = 1:numel(candidateAngles)
@@ -148,7 +131,8 @@ end
 fprintf('Initial SDAT azimuth positions identified: %d\n', numel(sdatRawIdx));
 fprintf('%s\n', join(string(sdatAzRow), ', '));
 
-%% Parse only the four photometer wavelengths; do NOT read scattering angle
+%% Parse the four photometer wavelengths; do NOT read scattering angle
+
 rec = struct('Time',{},'Wavelength_nm',{},'SZA_deg',{},'Radiance',{});
 k = 0;
 
@@ -280,6 +264,8 @@ for isel = 1:numel(selectedScanIdx)
     sza4 = nan(numel(graspWavelengths),1);
     rowTime4 = NaT(numel(graspWavelengths),1,'TimeZone','UTC');
 
+    % Select exactly one row for each wavelength. If duplicates occur,
+    % choose the row nearest the scan centre.
     for jw = 1:numel(graspWavelengths)
         wl = graspWavelengths(jw);
         candidates = idxScan([rec(idxScan).Wavelength_nm] == wl);
@@ -299,17 +285,17 @@ for isel = 1:numel(selectedScanIdx)
         rowTime4(jw) = rec(ir).Time;
     end
 
-    % Step 3: validity at each wavelength before the common four-WL mask.
+    % Validity at each wavelength before the common four-wavelength mask.
     valid4 = isfinite(rad4) & rad4 > -900;
     nValidPerWL = sum(valid4,2);
 
-    % Step 5: one invalid wavelength removes this azimuth from all four.
+    % One invalid wavelength removes this azimuth from all four.
     commonKeep = all(valid4,1);  % 1 x N
     retainedAz = sdatAzimuth_deg(commonKeep');
     removedAz = sdatAzimuth_deg(~commonKeep');
     retainedRAA = retainedAz + 180;
 
-    % Non-overlapping range coverage after the common mask.
+    % Non-overlapping angular-range coverage after the common mask.
     n2to6   = sum(commonKeep & sdatAzRow >= 2 & sdatAzRow <= 6);
     n6to30  = sum(commonKeep & sdatAzRow >  6 & sdatAzRow <= 30);
     n30to80 = sum(commonKeep & sdatAzRow > 30 & sdatAzRow <= 80);
@@ -361,7 +347,7 @@ for isel = 1:numel(selectedScanIdx)
     summaryRows(isel).RowTime870_UTC = rowTime4(3);
     summaryRows(isel).RowTime1020_UTC = rowTime4(4);
 
-    % One row for every one of the 30 initial azimuths.
+    % One row for every initial azimuth.
     for jang = 1:numel(sdatAzimuth_deg)
         ia = ia+1;
         angleRows(ia).TargetIndex = selectedTargetIndex(isel);
@@ -394,13 +380,13 @@ disp(summaryTable(:, { ...
     'N_SDAT_common','RemovedAzimuth_deg', ...
     'SZA440_deg','SZA675_deg','SZA870_deg','SZA1020_deg'}));
 
-fprintf('\nWhat Mariana should compare with SDAT:\n');
-fprintf('  1. N_SDAT_common = n written for each photometer wavelength.\n');
-fprintf('  2. RetainedAzimuth_deg = azimuths left after the common 4-WL mask.\n');
-fprintf('  3. RetainedRAA_deg = azimuth + 180 written as RAA.\n');
-fprintf('  4. SZAxxx_deg and VZAxxx_deg = 180-SZA for each wavelength.\n');
-fprintf('  5. Use the angle-level CSV to see exactly which wavelength caused removal.\n');
-fprintf('  Scattering angle is NOT used anywhere in this SDAT cross-check.\n');
+fprintf('\nKey fields for comparison with an independently generated SDAT:\n');
+fprintf('  N_SDAT_common          : number of angular measurements retained.\n');
+fprintf('  RetainedAzimuth_deg    : azimuths after the common 4-WL mask.\n');
+fprintf('  RetainedRAA_deg        : azimuth + 180.\n');
+fprintf('  SZAxxx_deg / VZAxxx_deg: wavelength-specific geometry.\n');
+fprintf('  angle-level CSV        : identifies the wavelength causing removal.\n');
+fprintf('  Scattering angle is not used in this SDAT cross-check.\n');
 
 %% ---------------------------- SAVE -----------------------------------
 
@@ -414,7 +400,7 @@ fprintf('\nSaved:\n  %s\n  %s\n',summaryCsv,anglesCsv);
 %% ========================== LOCAL FUNCTION ============================
 
 function [almFile, cleanupObj] = getAlmFile(inputFile)
-% Accept an extracted .alm file or a ZIP containing an .alm file.
+% Accept an extracted .alm file or a ZIP containing one .alm file.
     inputFile = char(inputFile);
     cleanupObj = [];
 
