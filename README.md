@@ -5,7 +5,7 @@ Small MATLAB utilities supporting the GRASP–SMPS comparison.
 The repository currently contains three diagnostics:
 
 1. `almucantar_sdat_crosscheck.m` — reproduces the photometer-side selection used when writing the GRASP SDAT file and gives a simple cross-check of the exact azimuths, counts and geometry retained after the common four-wavelength mask.
-2. `almucantar_scan_diagnostics.m` — inspects AERONET Version 3 **raw almucantar** (`.alm`) scans to test branch symmetry and angular/scattering-angle diagnostics. This is a separate diagnostic and does **not** reproduce SDAT construction.
+2. `almucantar_scan_diagnostics.m` — inspects AERONET Version 3 **raw almucantar** (`.alm`) scans for branch-symmetry/scattering-angle diagnostics. This is deliberately separate from SDAT construction.
 3. `grasp_avp_normalization_check.m` — inspects GRASP classic inversion-output text files to check the normalization of the printed aerosol vertical profile (AVP).
 
 ---
@@ -71,33 +71,25 @@ For example, for the 13 July 2024 14:35 scan, the raw positive branch contains 3
 
 ## 2. Raw almucantar branch-symmetry diagnostics
 
-### What the script calculates
+`almucantar_scan_diagnostics.m` is intentionally a **different** calculation from the SDAT cross-check. It uses the full raw AERONET scan, including both almucantar branches and the scattering-angle fields, to test possible scan asymmetry/horizontal inhomogeneity.
 
-For the GRASP wavelengths **440, 675, 870 and 1020 nm**, `almucantar_scan_diagnostics.m` calculates for each selected scan:
+It calculates, among other quantities:
 
-- number of valid raw radiance measurements;
-- counts in the manuscript angular intervals `[2°,6°]`, `[6°,30°]`, `[30°,80°]`, and `>80°`;
-- an additional non-overlapping angular partition for bookkeeping;
-- solar zenith angle (SZA);
-- maximum **actual scattering angle** present in the scan;
-- number of matched measurements on the two almucantar branches for scattering angle `>6°`;
-- mean, median and maximum branch difference;
-- number of branch pairs exceeding a configurable 20% reference threshold;
-- scan-level summaries across the four wavelengths.
+- raw valid radiance counts;
+- angular coverage;
+- maximum actual scattering angle;
+- matched plus/minus branch pairs;
+- mean, median and maximum branch difference.
 
-Branch difference is calculated as
+Branch difference is
 
 ```text
 100 * abs(I_plus - I_minus) / ((I_plus + I_minus)/2)
 ```
 
-The script also writes the individual branch-pair values and can generate a four-panel figure of branch difference versus actual scattering angle.
+The 20% line used in the plots is a reference diagnostic only and is **not** proposed as a GRASP quality-control threshold.
 
-### Important interpretation caveat
-
-The code analyses the **raw AERONET almucantar file**, including both branches. Therefore `NValidRaw` is not the number of measurements finally written to SDAT. Use `almucantar_sdat_crosscheck.m` for that comparison.
-
-Branch symmetry is a diagnostic of possible scan asymmetry/horizontal inhomogeneity and is **not** proposed as a universal GRASP quality-control threshold.
+Most importantly, `NValidRaw` from this script should **not** be compared with `n` in SDAT. For that comparison use `N_SDAT_common` from `almucantar_sdat_crosscheck.m`.
 
 ---
 
@@ -115,27 +107,7 @@ For each file it calculates:
 - the extra vertical depth associated with the missing normalized area;
 - `AOD1064 * integral(printed AVP)`, for comparison with AOD obtained by integrating the printed extinction profile.
 
-Subsequent inspection of the GRASP source code and GRASPpac literature showed that, for the LUT profile used here, GRASP adds the ground and a top-of-atmosphere point at 40 km. Above the highest retrieved lidar level, extinction is represented by a linear connection from the uppermost retrieved value to zero at 40 km; below the lowest LUT level, the lowest value is held constant to the ground. Thus an integration that stops at the highest printed retrieval level does not include the complete GRASP column.
-
-### Usage
-
-Place the GRASP inversion-output text files and `grasp_avp_normalization_check.m` in the same folder. By default the script processes all files matching:
-
-```matlab
-*_inversion_output.txt
-```
-
-Run:
-
-```matlab
-grasp_avp_normalization_check
-```
-
-The script prints a summary table and writes:
-
-```text
-grasp_avp_normalization_summary.csv
-```
+Inspection of the GRASP source code and GRASPpac literature showed that, for the LUT profile used here, GRASP adds the ground and a top-of-atmosphere point at 40 km. Above the highest retrieved lidar level, extinction is represented by a linear connection from the uppermost retrieved value to zero at 40 km; below the lowest LUT level, the lowest value is held constant to the ground. Thus an integration that stops at the highest printed retrieval level does not include the complete GRASP column.
 
 ---
 
