@@ -117,11 +117,6 @@ nominalAnglesRaw = str2double(headerFields(nMeta+1:nMeta+nAnglesRaw));
 nominalAnglesRaw = nominalAnglesRaw(:);
 
 %% Identify the 30 positive/outward azimuth positions used for SDAT
-% In the AERONET V3 raw almucantar header the outward positive branch starts
-% at +2 deg and reaches +180 deg. There is a repeated +6 deg field; keep the
-% first occurrence only. For the Magurele file this gives exactly:
-% 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 10, 12, 14, 16, 18, 20, 25,
-% 30, 35, 40, 45, 50, 60, 70, 80, 90, 100, 120, 140, 160, 180.
 
 iFirst2 = find(abs(nominalAnglesRaw-2) < 1e-10, 1, 'first');
 iFirst180 = find(abs(nominalAnglesRaw-180) < 1e-10, 1, 'first');
@@ -133,7 +128,6 @@ end
 candidateIdx = (iFirst2:iFirst180)';
 candidateAngles = nominalAnglesRaw(candidateIdx);
 
-% Stable de-duplication without relying on the third output of unique.
 keepUnique = false(size(candidateAngles));
 seenAngles = [];
 for i = 1:numel(candidateAngles)
@@ -144,14 +138,15 @@ for i = 1:numel(candidateAngles)
 end
 
 sdatRawIdx = candidateIdx(keepUnique);
-sdatAzimuth_deg = nominalAnglesRaw(sdatRawIdx);
+sdatAzimuth_deg = nominalAnglesRaw(sdatRawIdx);  % column vector
+sdatAzRow = sdatAzimuth_deg';                    % row vector
 
 if numel(sdatRawIdx) ~= 30
     warning('Expected 30 initial SDAT azimuths, but identified %d.', numel(sdatRawIdx));
 end
 
 fprintf('Initial SDAT azimuth positions identified: %d\n', numel(sdatRawIdx));
-fprintf('%s\n', join(string(sdatAzimuth_deg'), ', '));
+fprintf('%s\n', join(string(sdatAzRow), ', '));
 
 %% Parse only the four photometer wavelengths; do NOT read scattering angle
 rec = struct('Time',{},'Wavelength_nm',{},'SZA_deg',{},'Radiance',{});
@@ -219,17 +214,9 @@ for is = 1:numel(allScanIDs)
     wls = [rec(idx).Wavelength_nm];
     complete = all(ismember(graspWavelengths,wls));
 
-    if complete
-        % One row per GRASP wavelength, chosen below using nearest-to-centre
-        % if duplicates exist. For the centre here use all matching rows.
-        tt = [rec(idx(ismember(wls,graspWavelengths))).Time];
-        centerTime = datetime(mean(posixtime(tt)), ...
-            'ConvertFrom','posixtime','TimeZone','UTC');
-    else
-        tt = [rec(idx).Time];
-        centerTime = datetime(mean(posixtime(tt)), ...
-            'ConvertFrom','posixtime','TimeZone','UTC');
-    end
+    tt = [rec(idx).Time];
+    centerTime = datetime(mean(posixtime(tt)), ...
+        'ConvertFrom','posixtime','TimeZone','UTC');
 
     ks = ks+1;
     scan(ks).ID = allScanIDs(is);
@@ -293,7 +280,6 @@ for isel = 1:numel(selectedScanIdx)
     sza4 = nan(numel(graspWavelengths),1);
     rowTime4 = NaT(numel(graspWavelengths),1,'TimeZone','UTC');
 
-    % Get exactly one row for each wavelength.
     for jw = 1:numel(graspWavelengths)
         wl = graspWavelengths(jw);
         candidates = idxScan([rec(idxScan).Wavelength_nm] == wl);
@@ -313,31 +299,30 @@ for isel = 1:numel(selectedScanIdx)
         rowTime4(jw) = rec(ir).Time;
     end
 
-    % Step 3: validity at each individual wavelength before the common mask.
+    % Step 3: validity at each wavelength before the common four-WL mask.
     valid4 = isfinite(rad4) & rad4 > -900;
     nValidPerWL = sum(valid4,2);
 
-    % Step 5: if ANY wavelength is invalid at one azimuth, eliminate that
-    % azimuth from ALL four wavelengths.
-    commonKeep = all(valid4,1);
-    retainedAz = sdatAzimuth_deg(commonKeep);
-    removedAz = sdatAzimuth_deg(~commonKeep);
+    % Step 5: one invalid wavelength removes this azimuth from all four.
+    commonKeep = all(valid4,1);  % 1 x N
+    retainedAz = sdatAzimuth_deg(commonKeep');
+    removedAz = sdatAzimuth_deg(~commonKeep');
     retainedRAA = retainedAz + 180;
 
-    % Non-overlapping angular ranges used only as an easy SDAT coverage check.
-    n2to6   = sum(commonKeep & sdatAzimuth_deg' >= 2 & sdatAzimuth_deg' <= 6);
-    n6to30  = sum(commonKeep & sdatAzimuth_deg' >  6 & sdatAzimuth_deg' <= 30);
-    n30to80 = sum(commonKeep & sdatAzimuth_deg' > 30 & sdatAzimuth_deg' <= 80);
-    ngt80   = sum(commonKeep & sdatAzimuth_deg' > 80);
+    % Non-overlapping range coverage after the common mask.
+    n2to6   = sum(commonKeep & sdatAzRow >= 2 & sdatAzRow <= 6);
+    n6to30  = sum(commonKeep & sdatAzRow >  6 & sdatAzRow <= 30);
+    n30to80 = sum(commonKeep & sdatAzRow > 30 & sdatAzRow <= 80);
+    ngt80   = sum(commonKeep & sdatAzRow > 80);
 
-    % Per-wavelength pre-common-mask angular-range coverage.
+    % Per-wavelength range coverage before the common mask.
     rangeOKperWL = false(4,1);
     for jw = 1:4
         v = valid4(jw,:);
-        c1 = sum(v & sdatAzimuth_deg' >= 2 & sdatAzimuth_deg' <= 6);
-        c2 = sum(v & sdatAzimuth_deg' >  6 & sdatAzimuth_deg' <= 30);
-        c3 = sum(v & sdatAzimuth_deg' > 30 & sdatAzimuth_deg' <= 80);
-        c4 = sum(v & sdatAzimuth_deg' > 80);
+        c1 = sum(v & sdatAzRow >= 2 & sdatAzRow <= 6);
+        c2 = sum(v & sdatAzRow >  6 & sdatAzRow <= 30);
+        c3 = sum(v & sdatAzRow > 30 & sdatAzRow <= 80);
+        c4 = sum(v & sdatAzRow > 80);
         rangeOKperWL(jw) = all([c1 c2 c3 c4] >= 1);
     end
 
@@ -363,7 +348,6 @@ for isel = 1:numel(selectedScanIdx)
     summaryRows(isel).Ncommon_30to80 = n30to80;
     summaryRows(isel).Ncommon_gt80 = ngt80;
 
-    % SDAT geometry: SZA and VZA = 180-SZA for each photometer wavelength.
     summaryRows(isel).SZA440_deg = sza4(1);
     summaryRows(isel).SZA675_deg = sza4(2);
     summaryRows(isel).SZA870_deg = sza4(3);
@@ -377,9 +361,7 @@ for isel = 1:numel(selectedScanIdx)
     summaryRows(isel).RowTime870_UTC = rowTime4(3);
     summaryRows(isel).RowTime1020_UTC = rowTime4(4);
 
-    % Angle-level table: one row for every one of the 30 initial azimuths.
-    % This is the easiest file for checking exactly why a position was kept
-    % or removed. Scattering angle is intentionally absent.
+    % One row for every one of the 30 initial azimuths.
     for jang = 1:numel(sdatAzimuth_deg)
         ia = ia+1;
         angleRows(ia).TargetIndex = selectedTargetIndex(isel);
