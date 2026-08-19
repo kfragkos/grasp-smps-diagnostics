@@ -1,34 +1,29 @@
 %% almucantar_scan_diagnostics.m
-% Diagnostics for AERONET Version 3 RAW ALMUCANTAR (.alm) files.
+% RAW AERONET almucantar branch-symmetry diagnostics.
 %
-% The script reproduces the diagnostics discussed for the GRASP-SMPS
-% comparison:
-%   1) number of valid raw angular radiance measurements at 440, 675,
-%      870 and 1020 nm;
-%   2) counts in the manuscript's nominal azimuth-angle intervals
-%      [2,6], [6,30], [30,80], >80 deg (these overlap at 6 and 30 deg,
-%      so they are NOT additive), plus a non-overlapping partition for
-%      bookkeeping;
-%   3) solar zenith angle (SZA);
-%   4) maximum ACTUAL scattering angle represented in the raw scan;
-%   5) symmetry between the two almucantar branches for corresponding
-%      +/- nominal angles, restricted to actual scattering angle > 6 deg;
-%   6) mean, median and maximum branch difference and the number of pairs;
-%   7) scan-level summaries across the four GRASP wavelengths.
+% IMPORTANT - SDAT CHECK:
+% This script is NOT intended to reproduce the photometer subset written
+% to the GRASP SDAT file. It analyses the full raw AERONET almucantar scan,
+% including scattering-angle information and both branches.
 %
-% IMPORTANT:
-% This analyses the RAW .alm measurements. "NValid" therefore means
-% valid points present in the raw AERONET scan. If additional points were
-% removed before writing the GRASP SDAT file, compare against the SDAT or
-% the exact preprocessing code before calling them the points "supplied
-% to GRASP".
+% For a direct check against Mariana's SDAT construction, use:
 %
-% Branch relative difference used here:
+%     almucantar_sdat_crosscheck.m
+%
+% That companion script reproduces the 30 positive/outward azimuths,
+% applies the common four-wavelength NaN/missing-value mask, and reports
+% N_SDAT_common, retained azimuths, RAA, SZA and VZA. It deliberately does
+% not use scattering angle because scattering angle is not read when the
+% SDAT is constructed.
+%
+% This file is retained for the separate scientific diagnostic of whether
+% the raw almucantar scan shows branch asymmetry / possible horizontal
+% inhomogeneity. The 20% line is a reference diagnostic only, not a GRASP
+% QC threshold.
+%
+% Branch relative difference:
 %
 %     100 * abs(I_plus - I_minus) / ((I_plus + I_minus)/2)
-%
-% This is the same definition used to reproduce the July/August numbers
-% discussed in the manuscript analysis.
 %
 % No special MATLAB toolboxes are required.
 
@@ -55,12 +50,10 @@ targetToleranceMinutes = 8;
 % pairs with actual scattering angle > 6 deg.
 branchMinScatteringAngle = 6;
 
-% Useful reference line/flag. Change if you want to test another value.
+% Reference line/flag only; not a proposed selection threshold.
 branchDifferenceThresholdPct = 20;
 
-% Target cases to inspect.
-% Times are approximate scan-centre times; the code finds the nearest
-% complete 440/675/870/1020-nm scan.
+% Default target cases for the July/August diagnostic file.
 targetTimes = [
     datetime(2024,7,13,14,35,0,'TimeZone','UTC')
     datetime(2024,7,13,14,54,0,'TimeZone','UTC')
@@ -185,8 +178,6 @@ rec = rec(ord);
 
 %% -------------------------- BUILD SCANS -------------------------------
 
-% A new scan begins when the time gap between successive selected
-% wavelength rows exceeds scanGapMinutes.
 nRec = numel(rec);
 scanID = ones(nRec,1);
 
@@ -208,10 +199,8 @@ for is = 1:numel(allScanIDs)
     idx = find(scanID == allScanIDs(is));
     wls = [rec(idx).Wavelength_nm];
 
-    % Require at least one row for all four GRASP wavelengths.
     complete = all(ismember(graspWavelengths, wls));
 
-    % Use only the GRASP wavelengths for scan centre.
     idx4 = idx(ismember(wls, graspWavelengths));
     tt = [rec(idx4).Time];
     tsec = posixtime(tt);
@@ -257,8 +246,7 @@ else
         if dmin > targetToleranceMinutes
             warning(['No complete scan was found within %.1f min of %s. ' ...
                      'Nearest scan is %.2f min away.'], ...
-                     targetToleranceMinutes, ...
-                     string(targetTimes(it)), dmin);
+                     targetToleranceMinutes, string(targetTimes(it)), dmin);
             continue
         end
 
@@ -286,8 +274,6 @@ for isel = 1:numel(selectedScanIdx)
     s = scan(selectedScanIdx(isel));
     idx = s.RecordIndices;
 
-    % Keep exactly one record at each requested wavelength.
-    % If duplicates ever occur, take the one closest to scan centre.
     thisWlMeans = nan(numel(graspWavelengths),1);
     thisWlMax = nan(numel(graspWavelengths),1);
 
@@ -311,21 +297,14 @@ for isel = 1:numel(selectedScanIdx)
         rad = rec(ir).Radiance;
         sca = rec(ir).ScatteringAngle_deg;
 
-        % AERONET missing values are typically -999 or -999.000000.
         valid = isfinite(rad) & isfinite(sca) & rad > -900 & sca > -900;
-
         absNom = abs(nominalAngles);
 
-        % Counts in the exact intervals stated in the manuscript.
-        % NOTE: [2,6], [6,30] and [30,80] overlap at the boundaries,
-        % therefore these four counts must NOT be summed to recover NValid.
         Ncrit_2to6   = sum(valid & absNom >= 2  & absNom <= 6);
         Ncrit_6to30  = sum(valid & absNom >= 6  & absNom <= 30);
         Ncrit_30to80 = sum(valid & absNom >= 30 & absNom <= 80);
         Ncrit_gt80   = sum(valid & absNom > 80);
 
-        % Non-overlapping partition of the same valid measurements.
-        % These four DO sum to NValid.
         Npart_2to6   = sum(valid & absNom >= 2  & absNom <= 6);
         Npart_6to30  = sum(valid & absNom >  6  & absNom <= 30);
         Npart_30to80 = sum(valid & absNom > 30  & absNom <= 80);
@@ -339,11 +318,8 @@ for isel = 1:numel(selectedScanIdx)
             maxActualScat = NaN;
         end
 
-        % Pair corresponding +angle and -angle measurements and calculate
-        % branch symmetry for actual scattering angle > 6 deg.
         [pairNom, pairScat, Iplus, Iminus, branchDiff] = ...
-            branchSymmetry(nominalAngles, rad, sca, ...
-                           branchMinScatteringAngle);
+            branchSymmetry(nominalAngles, rad, sca, branchMinScatteringAngle);
 
         if isempty(branchDiff)
             nPairs = 0;
@@ -368,14 +344,10 @@ for isel = 1:numel(selectedScanIdx)
         waveRows(iw).Wavelength_nm = wlWanted;
         waveRows(iw).SZA_deg = rec(ir).SZA_deg;
         waveRows(iw).NValidRaw = NValid;
-
-        % Exact manuscript intervals (overlapping boundaries; not additive).
         waveRows(iw).Ncrit_2to6 = Ncrit_2to6;
         waveRows(iw).Ncrit_6to30 = Ncrit_6to30;
         waveRows(iw).Ncrit_30to80 = Ncrit_30to80;
         waveRows(iw).Ncrit_gt80 = Ncrit_gt80;
-
-        % Non-overlapping partition (additive to NValidRaw).
         waveRows(iw).Npart_2to6 = Npart_2to6;
         waveRows(iw).Npart_6to30 = Npart_6to30;
         waveRows(iw).Npart_30to80 = Npart_30to80;
@@ -392,7 +364,6 @@ for isel = 1:numel(selectedScanIdx)
         thisWlMeans(jw) = meanBranch;
         thisWlMax(jw) = maxBranch;
 
-        % Save each individual branch pair.
         for jp = 1:numel(branchDiff)
             ipair = ipair + 1;
             pairRows(ipair).TargetIndex = selectedTargetIndex(isel);
@@ -412,13 +383,9 @@ end
 waveTable = struct2table(waveRows);
 pairTable = struct2table(pairRows);
 
-% Scan-level summary generated from wavelength table.
 scanRows = struct([]);
-
 for isel = 1:numel(selectedScanIdx)
-
     mask = waveTable.TargetIndex == selectedTargetIndex(isel);
-
     scanRows(isel).TargetIndex = selectedTargetIndex(isel);
     scanRows(isel).Label = selectedLabel(isel);
     scanRows(isel).RequestedTime_UTC = selectedTargetTime(isel);
@@ -427,19 +394,13 @@ for isel = 1:numel(selectedScanIdx)
     scanRows(isel).MinNValidRawAcross4WL = min(waveTable.NValidRaw(mask));
     scanRows(isel).MaxActualScatteringAngle_deg = ...
         max(waveTable.MaxActualScatteringAngle_deg(mask),[],'omitnan');
-
-    % This definition reproduces the scan-average branch statistics used
-    % previously: mean of the four wavelength-specific means.
     scanRows(isel).MeanOfWavelengthMeanBranchDiff_pct = ...
         mean(waveTable.MeanBranchDiff_pct(mask),'omitnan');
-
     scanRows(isel).MaximumBranchDiffAcross4WL_pct = ...
         max(waveTable.MaxBranchDiff_pct(mask),[],'omitnan');
-
     scanRows(isel).All4WavelengthsMaxBelow20pct = ...
         all(waveTable.MaxBranchDiff_pct(mask) <= branchDifferenceThresholdPct);
 end
-
 scanTable = struct2table(scanRows);
 
 %% --------------------------- DISPLAY ---------------------------------
@@ -470,15 +431,12 @@ fprintf('\nSaved:\n  %s\n  %s\n  %s\n', waveCsv, scanCsv, pairCsv);
 %% -------------------------- OPTIONAL PLOTS ----------------------------
 
 if makePlots
-
     plotWavelengths = [440 675 870 1020];
-
     figure('Color','w','Name','Almucantar branch-symmetry diagnostics');
 
     for jw = 1:numel(plotWavelengths)
         subplot(2,2,jw);
         hold on; box on;
-
         wl = plotWavelengths(jw);
 
         for isel = 1:numel(selectedScanIdx)
@@ -489,7 +447,6 @@ if makePlots
                 [x,oo] = sort(pairTable.ActualScatteringAngle_deg(m));
                 yy = pairTable.BranchDiff_pct(m);
                 yy = yy(oo);
-
                 plot(x, yy, '-o', 'LineWidth', 1.0, 'MarkerSize', 4, ...
                      'DisplayName', char(selectedLabel(isel)));
             end
@@ -511,106 +468,75 @@ end
 %% ========================== LOCAL FUNCTIONS ===========================
 
 function [almFile, cleanupObj] = getAlmFile(inputFile)
-% Accept either a ZIP containing one .alm file or an extracted .alm file.
-
     inputFile = char(inputFile);
     cleanupObj = [];
 
     if endsWith(lower(inputFile), '.zip')
         tmpDir = tempname;
         mkdir(tmpDir);
-
-        files = unzip(inputFile, tmpDir);
-        isAlm = endsWith(lower(string(files)), '.alm');
-
-        if ~any(isAlm)
-            rmdir(tmpDir,'s');
-            error('ZIP file contains no .alm file.');
+        unzip(inputFile, tmpDir);
+        d = dir(fullfile(tmpDir, '**', '*.alm'));
+        if isempty(d)
+            error('ZIP file does not contain an .alm file.');
+        elseif numel(d) > 1
+            error('ZIP contains more than one .alm file; extract and specify one file.');
         end
-
-        almFiles = string(files(isAlm));
-        if numel(almFiles) > 1
-            warning('More than one .alm file found; using the first.');
-        end
-
-        almFile = char(almFiles(1));
-        cleanupObj = onCleanup(@() safeRemoveDir(tmpDir));
-
+        almFile = fullfile(d(1).folder, d(1).name);
+        cleanupObj = onCleanup(@() rmdir(tmpDir,'s'));
     elseif endsWith(lower(inputFile), '.alm')
         almFile = inputFile;
-
-        if ~isfile(almFile)
-            error('Input .alm file does not exist: %s',almFile);
-        end
     else
-        error('inputFile must be either an AERONET .alm file or a .zip containing one.');
+        error('inputFile must be an .alm file or .zip containing one .alm file.');
     end
 end
 
-function safeRemoveDir(d)
-    if isfolder(d)
-        rmdir(d,'s');
-    end
-end
+function [pairNom, pairScat, Iplus, Iminus, branchDiff] = ...
+    branchSymmetry(nominalAngles, rad, sca, minScat)
 
-function [nomAbs, scatPair, Iplus, Iminus, diffPct] = ...
-    branchSymmetry(nominalAngles, rad, scat, minScat)
-% Pair the two outer almucantar branches at equal absolute nominal angles.
-%
-% Only |nominal angle| > 6 deg is considered. A pair is retained if the
-% average absolute ACTUAL scattering angle of the +/- measurements exceeds
-% minScat.
-%
-% The returned branch difference is:
-% 100*abs(Iplus-Iminus)/mean([Iplus,Iminus]).
+    tol = 1e-8;
+    positiveAngles = unique(nominalAngles(nominalAngles > 0));
 
-    nominalAngles = nominalAngles(:);
-    rad = rad(:);
-    scat = scat(:);
-
-    valid = isfinite(rad) & isfinite(scat) & rad > -900 & scat > -900;
-
-    outerAngles = unique(abs(nominalAngles(abs(nominalAngles) > 6)));
-    outerAngles = sort(outerAngles);
-
-    nomAbs = [];
-    scatPair = [];
+    pairNom = [];
+    pairScat = [];
     Iplus = [];
     Iminus = [];
-    diffPct = [];
+    branchDiff = [];
 
-    for j = 1:numel(outerAngles)
-
-        a = outerAngles(j);
-
-        ip = find(nominalAngles ==  a, 1, 'first');
-        im = find(nominalAngles == -a, 1, 'first');
+    for ia = 1:numel(positiveAngles)
+        a = positiveAngles(ia);
+        ip = find(abs(nominalAngles-a) < tol);
+        im = find(abs(nominalAngles+a) < tol);
 
         if isempty(ip) || isempty(im)
             continue
         end
 
-        if ~(valid(ip) && valid(im))
+        % If an angle occurs more than once in the raw scan, pair the first
+        % valid occurrence on each branch for this diagnostic.
+        ip = ip(isfinite(rad(ip)) & isfinite(sca(ip)) & rad(ip) > -900 & sca(ip) > -900);
+        im = im(isfinite(rad(im)) & isfinite(sca(im)) & rad(im) > -900 & sca(im) > -900);
+        if isempty(ip) || isempty(im)
+            continue
+        end
+        ip = ip(1);
+        im = im(1);
+
+        scatPair = mean(abs([sca(ip),sca(im)]));
+        if scatPair <= minScat
             continue
         end
 
-        thisScat = mean(abs([scat(ip), scat(im)]));
-
-        if thisScat <= minScat
+        p = rad(ip);
+        m = rad(im);
+        denom = (p+m)/2;
+        if ~isfinite(denom) || denom <= 0
             continue
         end
 
-        denom = (rad(ip) + rad(im)) / 2;
-        if denom <= 0
-            continue
-        end
-
-        thisDiff = 100 * abs(rad(ip) - rad(im)) / denom;
-
-        nomAbs(end+1,1) = a; %#ok<AGROW>
-        scatPair(end+1,1) = thisScat; %#ok<AGROW>
-        Iplus(end+1,1) = rad(ip); %#ok<AGROW>
-        Iminus(end+1,1) = rad(im); %#ok<AGROW>
-        diffPct(end+1,1) = thisDiff; %#ok<AGROW>
+        pairNom(end+1,1) = a; %#ok<AGROW>
+        pairScat(end+1,1) = scatPair; %#ok<AGROW>
+        Iplus(end+1,1) = p; %#ok<AGROW>
+        Iminus(end+1,1) = m; %#ok<AGROW>
+        branchDiff(end+1,1) = 100*abs(p-m)/denom; %#ok<AGROW>
     end
 end
