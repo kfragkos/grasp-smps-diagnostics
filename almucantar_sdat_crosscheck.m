@@ -1,6 +1,8 @@
 %% almucantar_sdat_crosscheck.m
-% Cross-check the AERONET almucantar radiances retained when constructing
-% a GRASP SDAT file.
+% Preliminary cross-check of positive-branch AERONET angles.
+% This script does NOT reproduce the 20% two-branch screening.
+% N_SDAT_common may therefore exceed the actual number written to SDAT.
+% Use almucantar_pair_comparison.m for the two-branch analysis.
 %
 % The script reproduces the photometer-side angular selection:
 %   1) read an annual AERONET raw almucantar .alm file;
@@ -381,7 +383,7 @@ disp(summaryTable(:, { ...
     'SZA440_deg','SZA675_deg','SZA870_deg','SZA1020_deg'}));
 
 fprintf('\nKey fields for comparison with an independently generated SDAT:\n');
-fprintf('  N_SDAT_common          : number of angular measurements retained.\n');
+fprintf('  N_SDAT_common          : count BEFORE two-branch screening.\n');
 fprintf('  RetainedAzimuth_deg    : azimuths after the common 4-WL mask.\n');
 fprintf('  RetainedRAA_deg        : azimuth + 180.\n');
 fprintf('  SZAxxx_deg / VZAxxx_deg: wavelength-specific geometry.\n');
