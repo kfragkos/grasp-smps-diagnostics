@@ -146,6 +146,8 @@ The script reports SZA, raw and retained maximum scattering angle, mean/maximum 
 
 ### Run
 
+Raw almucantar data can be downloaded using the official [AERONET Version 3 raw-sky data service](https://aeronet.gsfc.nasa.gov/print_web_data_help_v3_raw_sky.html) (`ALM00=1`, `AVG=10`). For example, request [26 May 2024](https://aeronet.gsfc.nasa.gov/cgi-bin/print_web_data_raw_sky_v3?site=Magurele_Inoe&year=2024&month=5&day=26&year2=2024&month2=5&day2=27&ALM00=1&AVG=10&if_no_html=1) or [23 September 2024](https://aeronet.gsfc.nasa.gov/cgi-bin/print_web_data_raw_sky_v3?site=Magurele_Inoe&year=2024&month=9&day=23&year2=2024&month2=9&day2=24&ALM00=1&AVG=10&if_no_html=1), save the plain-text response with a `.alm` extension, and run the script on each day's file. The AERONET endpoint was not reachable from this analysis environment, so these day-specific downloads remain unverified here.
+
 Download an annual AERONET Version 3 raw almucantar `.alm` file for Magurele_Inoe and place it alongside the MATLAB script. Then execute:
 
 ```matlab
@@ -172,6 +174,6 @@ For May 16:00, the raw 440-nm branch difference reaches 47.05% at nominal azimut
 
 ### Cross-check of the 20% implementation
 
-The branch-averaging/common-mask procedure was independently checked with the available July–August 2024 raw AERONET archive (not included in this repository). It reproduced reported retained-angle counts and several reported removed RAA values: 14 July 14:35 (25 angles; RAA 250°, 260°, 360° plus two missing low-angle positions); 15 July 14:54 (17); 8 August 16:08 (25; RAA 196°, 320°, 360° plus two missing low-angle positions); and 11 August 14:12 (23; RAA 240°, 250°, 260°, 270°, 300° plus two missing low-angle positions). The code has not been executed in a MATLAB runtime here; these cross-checks used an independent implementation of the same numerical rules.
+The branch-screening/common-mask procedure was independently checked with the available July–August 2024 raw AERONET archive (not included in this repository). It reproduced reported retained-angle counts and several reported removed RAA values: 14 July 14:35 (25 angles; RAA 250°, 260°, 360° plus two missing low-angle positions); 15 July 14:54 (17); 8 August 16:08 (25; RAA 196°, 320°, 360° plus two missing low-angle positions); and 11 August 14:12 (23; RAA 240°, 250°, 260°, 270°, 300° plus two missing low-angle positions). The code has not been executed in a MATLAB runtime here; these cross-checks used an independent implementation of the same numerical rules.
 
 **Interpretation:** This is a limited diagnostic of the radiance input, not a criterion for selecting good GRASP–SMPS VSD comparisons. The contrast in VSD agreement cannot be straightforwardly attributed to almucantar branch symmetry, and reduced angular coverage remains an unverified possible contributor.
