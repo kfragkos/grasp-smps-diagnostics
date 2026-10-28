@@ -142,7 +142,7 @@ D = 200\,|I_+-I_-|/(I_++I_-)\quad [\%].
 
 An angular position is rejected if **either** branch is missing or nonpositive, or if **any one** of the four wavelengths (440, 675, 870, 1020 nm) has `D > 20%`. The resulting common angular mask is applied to all four wavelengths. This implements the branch comparison described for the photometer preprocessing; it is **not** a new general-purpose retrieval-quality threshold. The multiplicative radiance normalization does not affect `D`.
 
-The script reports SZA, raw and retained maximum scattering angle, mean/maximum branch differences for angles above 6°, number of retained angles, and removed RAA values. **Scattering angle is a diagnostic only and does not enter the SDAT-screening mask.**
+The script reports SZA, raw and retained maximum scattering angle, mean/maximum branch differences for **actual scattering angles >6°**, number of retained angles, and removed RAA values. Scattering-angle fill values (e.g., 999°) are excluded from these diagnostics. A 28 October 2026 code correction aligned the threshold with actual scattering angle rather than nominal azimuth; recompute results produced using earlier revisions before making exact numerical comparisons. **Scattering angle is a diagnostic only and does not enter the SDAT-screening mask.**
 
 ### Run
 
