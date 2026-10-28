@@ -160,18 +160,21 @@ for it=1:4
     keepWL=good&(delta<=branchThreshold);
     keepAll=all(keepWL,1);
     plotRecords{it}=struct('Scat',scat,'Diff',delta,'KeepAll',keepAll);
-    outer=(az'>6);
-    evalRaw=outer & all(isfinite(delta),1);
-    rawVals=delta(:,evalRaw);
-    keepOuter=outer & keepAll;
-    keptVals=delta(:,keepOuter);
+    % Apply the diagnostic 6-degree limit to ACTUAL scattering angles,
+    % independently for each wavelength (not to nominal azimuth).
+    % Reject invalid/sentinel scattering angles such as 999 degrees.
+    rawDiagnosticMask = isfinite(delta) & isfinite(scat) & ...
+                        scat > 6 & scat <= 180;
+    rawVals = delta(rawDiagnosticMask);
+    retainedDiagnosticMask = rawDiagnosticMask & repmat(keepAll,4,1);
+    keptVals = delta(retainedDiagnosticMask);
     o.Status="MATCHED";
     o.Nretained=sum(keepAll);
     o.RemovedRAA_deg=join(string((az(~keepAll')+180)'),';');
     o.MeanSZA_deg=mean(sza);
-    rawScat=scat(isfinite(scat) & scat>0);
+    rawScat=scat(good & isfinite(scat) & scat>0 & scat<=180);
     retainedScat=scat(:,keepAll);
-    retainedScat=retainedScat(isfinite(retainedScat) & retainedScat>0);
+    retainedScat=retainedScat(isfinite(retainedScat) & retainedScat>0 & retainedScat<=180);
     if ~isempty(rawScat), o.MaxRawScattering_deg=max(rawScat); end
     if ~isempty(retainedScat), o.MaxRetainedScattering_deg=max(retainedScat); end
     if ~isempty(rawVals)
